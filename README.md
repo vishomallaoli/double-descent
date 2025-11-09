@@ -28,3 +28,11 @@ pip install -r requirements.txt
 
 # generate figures + CSVs
 python scripts/generate_figures.py
+
+
+@misc{mallaoli2025ddnoise,
+  author = {Visho Malla Oli},
+  title  = {Double Descent under Structured Label Noise: A Theoretical \& Empirical Study in Two–Layer Neural Networks},
+  year   = {2025},
+  note   = {Preprint}
+}

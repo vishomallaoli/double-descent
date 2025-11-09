@@ -1,0 +1,353 @@
+\documentclass[11pt]{article}
+
+% -------- Packages --------
+\usepackage{amsmath, amsthm, amssymb, amsfonts}
+\usepackage{bm}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage[hidelinks]{hyperref}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{graphicx,amsmath,amssymb,mathtools}
+\graphicspath{{figs/}} % if your PNGs live in paper/figs
+\DeclareMathOperator{\sign}{sign}
+
+
+% -------- Page Setup --------
+\geometry{letterpaper, margin=1in}
+
+% -------- Theorem Environments (if needed later) --------
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{definition}[theorem]{Definition}
+
+% -------- Title --------
+\title{Double Descent under Structured Label Noise:\\
+A Theoretical \& Empirical Study in Two\texorpdfstring{$-$}{-}Layer Neural Networks}
+\author{Visho Malla Oli\\
+Department of Computer Science, University of Mississippi}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We investigate the double descent phenomenon in two-layer ReLU neural networks under structured
+label noise. Extending the recent work of Sang et al. (2025)~\cite{Sang2025} on double descent in noiseless two-layer
+models, we introduce label noise with specific structure (such as class-specific label flips and feature-
+correlated corruption) and examine its impact on generalization. We describe a teacher--student framework
+where a teacher model generates data for a binary classification task, and a two-layer ReLU network serves
+as the student. Structured label noise is injected by flipping labels in a targeted manner (e.g., only within one
+class or within a cluster of examples). We develop a theoretical heuristic explaining how such label noise
+alters the classic double descent curve, shifting the interpolation threshold and amplifying the test error
+peak. Empirically, we present Python simulation results showing test error as a function of model
+complexity (measured by the ratio $\alpha = n/d_{\text{model}}$ of training samples $n$ to model dimension $d_{\text{model}}$). The
+experiments confirm that structured label noise increases the peak test error and can delay the onset of the
+second descent. We also demonstrate that adding regularization (e.g., $L_2$ weight decay) can mitigate the
+explosion in test error, yielding a smoother risk curve. Our findings provide insight into the interplay
+between overparameterization and noisy labels, emphasizing interpretability of double descent in practical
+settings with mislabeled data. We conclude with discussions on how structured noise induces spurious
+memorization and how careful modeling or regularization can maintain generalization.
+\end{abstract}
+
+\section{Introduction}
+Modern machine learning models often operate in an over-parameterized regime, where the number of
+model parameters exceeds the number of training samples. In classical learning theory, increasing model
+complexity typically yields a U-shaped test error curve due to the bias--variance trade-off: test error
+decreases at first but eventually rises as the model begins to overfit the training data. Surprisingly, recent
+studies have observed a double descent pattern in test error that defies this classical U-curve~\cite{Belkin2019}. In double
+descent, as model complexity grows beyond the point of exact interpolation of the training data, test error
+can decrease again, leading to a second descent phase. This phenomenon was first highlighted in modern
+deep learning contexts by Belkin et al.~\cite{Belkin2019}, and subsequently explored across various models and settings
+\cite{Nakkiran2021,Ascoli2020}. Double descent suggests that highly over-parameterized models can generalize well despite having
+the capacity to perfectly fit (or even memorize) the training data.
+
+In a recent work, Sang et al.~\cite{Sang2025} provided a theoretical analysis of double descent in a two-layer ReLU
+neural network for binary classification. Their study considered a teacher--student framework with a two-
+layer ``student'' network learning from data labeled by a ground-truth teacher function. They demonstrated
+that test error as a function of the model’s size exhibits a double descent behavior when plotted against the
+ratio $\alpha = n/d_{\text{model}}$ (number of training samples $n$ to model dimension $d_{\text{model}}$). The interpolation threshold
+-- roughly when $n \approx d_{\text{model}}$ -- marked a peak in test error, separating a classical regime ($n \gg d_{\text{model}}$, under-
+parameterized) from an over-parameterized regime ($n \ll d_{\text{model}}$) where test error falls again~\cite{Sang2025}. Their analysis
+leveraged tools like the Convex Gaussian Min--Max Theorem to characterize the behavior of the empirical
+risk minimizer in high dimensions.
+
+However, the analysis in~\cite{Sang2025} (and many other works on double descent) assumes clean training data -- i.e.,
+the training labels are generated exactly by the teacher model without corruption. In practical scenarios,
+datasets often contain label noise, where some training examples are mislabeled. Label noise can
+significantly degrade generalization performance and might interact with model overcapacity in non-trivial
+ways. Structured label noise refers to noise that is not purely random but exhibits a pattern -- for example,
+only labels of a particular class are flipped, or labels in one region of the feature space are corrupted. Such
+structured noise is common in real datasets; for instance, one class of images might be systematically
+mislabeled due to ambiguity, or sensor failures might affect only a cluster of samples.
+
+Our contribution in this paper is a theoretical and empirical study of how structured label noise influences
+the double descent behavior in two-layer neural networks. We build upon the framework of~\cite{Sang2025} by
+introducing structured label noise into the data generation process and investigating its effect on both the
+interpolation threshold and the shape of the test error curve. We provide a clear description of the two-
+layer model and the teacher data generation process (Section~\ref{sec:methods}), then develop a heuristic
+theoretical analysis for the impact of label noise on generalization error (Section~\ref{sec:theory}). In
+Section~\ref{sec:experiments}, we empirically simulate training of two-layer ReLU networks under various noise
+patterns and demonstrate that label noise tends to shift and magnify the double descent peak. We also
+examine the role of regularization in alleviating these effects. Our findings offer insight into why and how
+over-parameterized neural networks can still generalize in the presence of mislabeled data, which is an
+important question for understanding robust machine learning.
+
+\section{Related Work}
+The discovery of double descent in modern models has spurred a line of research aiming to understand this
+counter-intuitive phenomenon. Belkin et al.~\cite{Belkin2019} first demonstrated double descent in simple settings (such
+as polynomial regression and random Fourier features) and in deep neural networks, reconciling it with
+classical theory by emphasizing the role of model overparameterization beyond the interpolation point.
+Subsequent works such as Nakkiran et al.~\cite{Nakkiran2021} expanded this concept to deep double descent, examining
+how increasing either model size or training data size can cause multiple descent curves in test error.
+
+On the theoretical side, several authors have analyzed double descent in high-dimensional models using
+tools from random matrix theory and statistical physics. For example, d’Ascoli et al.~\cite{Ascoli2020} studied bias--variance
+decompositions in over-parameterized linear models and neural networks (the ``lazy'' training regime),
+showing how variance spikes at the interpolation threshold while bias continues to decrease, leading to
+double descent. Deng et al.~\cite{Deng2022} presented an analytic model for double descent in high-dimensional binary
+classification using Gaussian mixtures, providing precise asymptotic expressions for test error as a function
+of the sample-to-dimension ratio. These analyses typically assume some form of noisiness in the data
+(either label noise or intrinsic noise in the model), since without any noise or mismatch, an over-
+parameterized model could achieve near-zero test error once it exactly learns the teacher function.
+
+The effect of label noise on generalization has long been studied in the context of robust learning. In the
+double descent context, label noise is known to exacerbate the peak at the interpolation threshold. Indeed,
+in linear regression, it has been shown that with label noise, the mean-squared test error can blow up (in
+theory, approach infinity) when the number of parameters equals the number of data points (the
+interpolation point), if no regularization is applied~\cite{Belkin2019,Ascoli2020}. This is because the solution that exactly fits noisy
+data must necessarily fit the noise, causing extremely high variance in predictions. Prior works have mostly
+considered random label noise (each label independently flipped with some probability) to illustrate this
+effect. Far less explored is structured label noise, where only specific subsets of data are corrupted. Some
+empirical studies indicate that structured label noise (such as class-conditional noise) can lead to
+systematic generalization failures concentrated in certain classes. Understanding how over-
+parameterized models handle such structured noise is crucial, as it bridges theoretical analysis with realistic
+scenarios of dataset corruption.
+
+Our work differentiates itself by focusing on two-layer ReLU neural networks under structured label noise,
+extending the rigorous analysis of Sang et al.~\cite{Sang2025}. We also examine how regularization can mitigate the
+double descent risk curve. Prior work by Nakkiran et al.~\cite{Nakkiran2020} showed that applying an optimal amount of
+ridge regularization can remove the double descent peak, essentially reverting the test error curve back to a
+more traditional monotonic shape. We verify a similar phenomenon in our two-layer network experiments:
+even a small weight decay significantly reduces the harm caused by fitting noisy labels. Overall, our study
+contributes to the growing body of evidence~\cite{Belkin2019,Nakkiran2021,Ascoli2020,Deng2022,Nakkiran2020} that double descent is a generic phenomenon of over-
+parameterized models, and provides new insights specific to the case of structured label noise in neural
+networks.
+
+\section{Methods: Two-Layer Model and Structured Label Noise}
+\label{sec:methods}
+\paragraph{Two-Layer ReLU Network (Student Model).}
+We consider a two-layer neural network with a ReLU activation
+function in the hidden layer, designed for binary classification. The network (which we refer to as the
+student) has an input dimension $d$, one hidden layer with $H$ hidden units, and an output layer
+producing a scalar score used for classification. Mathematically, the model can be written as
+\begin{equation}
+\label{eq:model}
+f(x; W, a, b) \;=\; \sum_{j=1}^{H} a_j\, \sigma(w_j^\top x + b_j), \qquad \sigma(u) = \max\{0,u\},
+\end{equation}
+where $W = [w_1,\dots,w_H] \in \mathbb{R}^{d \times H}$ are the hidden-layer weights, $b =
+(b_1,\dots,b_H)$ are the hidden biases, $a = (a_1,\dots,a_H)$ are the output-layer weights. The prediction is
+$\hat{y} = \mathrm{sign}\big(f(x)\big) \in \{+1,-1\}$. Increasing $H$ increases the number of trainable parameters (model complexity).
+We define the model dimension $d_{\text{model}}$ as the total number of trainable parameters. In this formulation,
+$d_{\text{model}} = H(d+1) + H = H(d+2)$, which is $O(Hd)$ for large $d$. We consider the proportional regime where
+$d$ and $H$ grow while ratios (e.g., $n/d_{\text{model}}$) remain roughly constant.
+
+\paragraph{Teacher Model and Data Generation.}
+Following~\cite{Sang2025}, we assume the data are generated
+by a fixed teacher. Draw a signal vector $\eta \sim \mathcal{N}(0, I_d)$ (fixed for a dataset). For $i=1,\dots,n$:
+\begin{enumerate}[leftmargin=1.5em, itemsep=0.25em]
+\item Draw $\varepsilon_i \sim \mathcal{N}(0, I_d)$ independently.
+\item Draw a clean label $y_i^{\ast} \in \{\pm 1\}$ with $\Pr(y_i^{\ast}=+1) = \rho_{+1}$, $\Pr(y_i^{\ast}=-1) = \rho_{-1}$ (often $\rho_{\pm1} = 0.5$).
+\item Set the feature vector
+\begin{equation}
+\label{eq:data}
+x_i \;=\; \sqrt{d}\,\eta\,y_i^{\ast} + \varepsilon_i. \tag{1}
+\end{equation}
+\end{enumerate}
+Conditional on $y_i^{\ast}=+1$, $x_i \sim \mathcal{N}\!\big(+\sqrt{d}\,\eta,\, I_d\big)$; conditional on $y_i^{\ast}=-1$, $x_i \sim \mathcal{N}\!\big(-\sqrt{d}\,\eta,\, I_d\big)$.
+Thus the two classes form clusters centered at $\pm \sqrt{d}\,\eta$.
+
+\paragraph{Structured Label Noise.}
+We corrupt only training labels (features remain clean). Several patterns are possible:
+\begin{itemize}[leftmargin=1.5em, itemsep=0.25em]
+\item \emph{Class-conditional noise:} flip labels of one class at a higher rate. With noise level $\pi \in [0,1]$,
+\begin{equation}
+\label{eq:noise}
+y_i \;=\; 
+\begin{cases}
+-y_i^{\ast}, & \text{with probability } \pi \quad \text{if } y_i^{\ast}=+1,\\[3pt]
+y_i^{\ast}, & \text{otherwise},
+\end{cases} \tag{2}
+\end{equation}
+i.e., a fraction $\pi$ of the $+1$ labels are flipped to $-1$; all $-1$ labels remain intact.
+\item \emph{Cluster or group noise:} flip labels only within a selected subset (e.g., near the decision boundary).
+\item \emph{Feature-correlated noise:} flip labels for samples with a prescribed feature condition (e.g., extreme values).
+\end{itemize}
+
+\paragraph{Performance Metric.}
+Although training uses noisy labels $y_i$, test performance is evaluated on a clean test set drawn from~\eqref{eq:data}
+and labeled with $y^{\ast}$. The test error is $R_{\text{test}} = \Pr\big[\hat{y}(x)\neq y^{\ast}\big]$.
+
+\paragraph{Training Procedure.}
+We train by empirical risk minimization with (optional) $L_2$ regularization:
+\begin{equation}
+\label{eq:loss}
+L(W,a,b) \;=\; \frac{1}{n}\sum_{i=1}^n \ell\!\Big(y_i,\; f(x_i;W,a,b)\Big) \;+\; \frac{\lambda}{2}\,\Vert (W,a,b)\Vert_2^2,
+\end{equation}
+with $\ell$ the square loss $\ell(y,\hat{y})=\tfrac{1}{2}(y-\hat{y})^2$ (used for analysis) or logistic/cross-entropy (used in practice).
+When $\lambda=0$, models may interpolate the training data, often exhibiting double descent~\cite{Nakkiran2020}.
+
+\paragraph{Model Complexity and the $\alpha$ Ratio.}
+We quantify complexity by $\alpha = n/d_{\text{model}}$. Smaller $\alpha$ indicates more parameters than data (over-parameterized),
+larger $\alpha$ indicates under-parameterization. The interpolation threshold typically occurs near $\alpha \approx 1$.
+
+\section{Theoretical Analysis of Double Descent with Label Noise}
+\label{sec:theory}
+\paragraph{Baseline (No Noise).}
+In the noiseless case ($\pi=0$), asymptotic analyses (e.g., via CGMT) show a double descent shape in test error versus $\alpha$.
+For $\alpha \gg 1$, models are under-parameterized (higher bias). As $\alpha$ decreases, bias drops and test error falls. Near $\alpha \approx 1$,
+variance spikes (fitting finite-sample idiosyncrasies), producing a peak. For $\alpha < 1$, models become highly expressive; excess degrees of
+freedom can spread variance, leading to a second descent. As $\alpha \to 0$, test error approaches the Bayes error (essentially 0 here)
+if the model can represent the teacher function~\cite{Sang2025,Belkin2019}.
+
+\paragraph{Effects of Label Noise.}
+Let $\pi>0$ denote the (structured) label-noise rate.
+\begin{enumerate}[leftmargin=1.5em, itemsep=0.25em]
+\item \textbf{Increased Bayes Error.} There is an irreducible error due to mislabels. In class-conditional noise with rate $\pi$ on a class
+occupying fraction $\rho_{+1}$, the Bayes error is at least $\pi\,\rho_{+1}$.
+\item \textbf{Variance Spike at Interpolation.} Around $\alpha\approx 1$, models that can interpolate also fit the noise, causing large variance
+and higher test error. In linear settings, mean-squared error can blow up at $\alpha=1$ without regularization~\cite{Belkin2019,Ascoli2020}.
+\item \textbf{Reduced Second-Descent Benefit.} For $\alpha \ll 1$, highly over-parameterized models can isolate noisy examples (memorize them)
+while learning the clean signal. The second descent plateaus at the noise floor rather than tending to $0$.
+\end{enumerate}
+
+Combining these yields qualitative predictions for $R_{\text{test}}(\alpha)$ with noise:
+(i) the entire curve lifts upward; (ii) the interpolation peak grows; (iii) the peak may shift slightly from $\alpha=1$ (extra capacity may be
+needed to fit structured noise); (iv) for $\alpha \to 0$, $R_{\text{test}}$ approaches the noise floor.
+
+A convenient misclassification expression for a classifier $f$ on the Gaussian-mixture~\eqref{eq:data} is
+\begin{equation}
+\label{eq:risk}
+R_{\text{test}}
+= \tfrac{1}{2}\,\Pr\!\big[f(x) < 0 \,\big|\, y^{\ast}=+1\big]
++ \tfrac{1}{2}\,\Pr\!\big[f(x) \ge 0 \,\big|\, y^{\ast}=-1\big].
+\end{equation}
+In the Bayes-optimal case $f(x)=\mathrm{sign}(\eta^\top x)$, the baseline error is $\Phi(-\Delta)$ with a suitable SNR $\Delta$.
+With noisy training labels, the learned decision boundary deviates from $\eta$, worsening alignment (particularly near $\alpha=1$).
+
+% ---- Figure 1: Conceptual Illustration ----
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figure1_double_descent_noise.png} % or figs/figure1_double_descent_noise.png
+  \caption{Test error vs.\ model size ($H$) under structured label-noise levels $\pi\in\{0,0.1,0.3\}$.}
+  \label{fig:concept}
+\end{figure}
+
+
+\section{Experiments}
+\label{sec:experiments}
+\paragraph{Setup.}
+We simulate training using the teacher model~\eqref{eq:data}. Unless specified, input dimension $d=50$ and training size $n=200$
+(with balanced class prior $\rho_{+1}=\rho_{-1}=0.5$). The signal vector $\eta$ is drawn once per dataset. Structured label noise is applied as in
+\eqref{eq:noise}: we consider $\pi \in \{0, 0.1, 0.3\}$. Test sets are drawn cleanly with $10{,}000$ samples.
+
+\paragraph{Models and Training.}
+We train two-layer ReLU networks while varying hidden units $H$ to sweep model complexity. Since $d_{\text{model}}\approx O(Hd)$,
+$\alpha \approx n/d_{\text{model}} \propto n/(Hd)$. With $n=200$ and $d=50$, $\alpha \approx 4/H$, so $H\approx4$ is near interpolation ($\alpha\approx1$).
+We use SGD or LBFGS until convergence. We compare unregularized ($\lambda=0$) to $L_2$-regularized ($\lambda>0$) training.
+Each configuration is averaged over multiple seeds.
+
+\paragraph{Metrics.}
+We track training error and test misclassification rate versus $H$ (or equivalently $\alpha$). Interpolation is confirmed by near-zero training error.
+
+\section{Results and Discussion}
+\paragraph{No-Noise Double Descent.}
+With $\pi=0$, we replicate double descent. Small $H$ underfits (high test error). As $H\to 3,4$, test error decreases.
+Near $H\approx4$ ($\alpha\approx1$), a spike appears as the model interpolates and overfits finite-sample idiosyncrasies.
+Larger $H$ ($10$--$20$) yields a second descent, approaching the Bayes error (near $0$ for separated clusters).
+
+\paragraph{Impact of Structured Label Noise.}
+For $\pi\in\{0.1,0.3\}$:
+\begin{itemize}[leftmargin=1.5em, itemsep=0.25em]
+\item The interpolation peak increases markedly. At $\pi=0.3$, peak test error can approach chance near the threshold.
+\item The peak shifts slightly to larger $H$ (smaller $\alpha$) as noise rises, since extra capacity is needed to memorize wrong labels.
+\item In the over-parameterized regime ($H\gg4$), test error plateaus above zero. For $\pi=0.1$, the floor is $\sim\!5$--$6\%$; for $\pi=0.3$, $\sim\!15$--$16\%$,
+matching the noise floor (since $30\%$ flips in half the data imply $\gtrsim 15\%$ irreducible error).
+\item For moderate noise, the second descent is present but flatter: beyond some capacity, extra parameters do not improve clean accuracy much.
+\end{itemize}
+
+\paragraph{Effect of Regularization.}
+Adding modest $L_2$ (e.g., $\lambda=0.01$):
+\begin{itemize}[leftmargin=1.5em, itemsep=0.25em]
+\item Greatly diminishes the interpolation spike; the curve looks closer to a classical U-shape, consistent with~\cite{Nakkiran2020}.
+\item Increases bias slightly; the best achievable error in the highly over-parameterized regime can be a bit worse than the unregularized floor (e.g., $15\%\to 17\%$),
+a common trade-off favored to avoid the large spike near $\alpha\approx1$.
+\end{itemize}
+
+% ---- Figure 2: Regularization Comparison ----
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figure2_regularization_effect.png} % or figs/figure2_regularization_effect.png if you didn't set \graphicspath
+  \caption{Effect of $L_2$ regularization on the double–descent curve at $\pi=0.3$, comparing $\lambda=0$ (pronounced spike near interpolation) versus $\lambda=0.01$ (mitigated spike).}
+  \label{fig:reg}
+\end{figure}
+
+\paragraph{Interpretability Note.}
+Class-conditional corruption induces asymmetry. Around interpolation, models may bias toward the clean class,
+sacrificing the corrupted class. In the over-parameterized regime, the network can dedicate units to memorize noisy
+subsets while modeling the clean signal---a conditional memorization behavior relevant to interpretability.
+
+\section{Conclusion}
+We studied double descent in two-layer ReLU networks under structured label noise. Building on~\cite{Sang2025},
+we introduced class-conditional and other structured flips and examined how they affect the interpolation
+threshold and generalization. Theoretically and empirically, noise raises the entire risk curve, amplifies the peak near
+$\alpha\approx1$, and prevents the second descent from reaching $0$, instead plateauing at the noise floor. Nevertheless,
+sufficiently large models approach the Bayes floor by learning the signal and compartmentalizing mislabeled examples.
+Explicit regularization (e.g., $L_2$) effectively smooths the curve, mitigating the interpolation spike.
+
+Future directions include a rigorous CGMT-style treatment with structured noise (quantifying peak height and optimal
+regularization as a function of $\pi$) and exploring other noise structures (feature-correlated, adversarial). Practically,
+our results reinforce that with systematic label errors, operating precisely at the interpolation threshold without
+regularization is risky; either move well past the threshold (with regularization) or mitigate noise via data cleaning or
+robust losses.
+
+\bigskip
+\noindent\textbf{Acknowledgments.} I thank Dr.\ Hailin Sang for guidance and insightful discussions.
+
+% -------- References --------
+\begin{thebibliography}{99}
+
+\bibitem{Sang2025}
+C.\ S.\ Abeykoon, A.\ Beknazaryan, and H.\ Sang.
+\newblock The Double Descent Behavior in Two Layer Neural Network for Binary Classification.
+\newblock \emph{Journal of Data Science}, 23(2):370--388, 2025.
+
+\bibitem{Belkin2019}
+M.\ Belkin, D.\ Hsu, S.\ Ma, and S.\ Mandal.
+\newblock Reconciling modern machine-learning practice and the classical bias--variance trade-off.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 116(32):15849--15854, 2019.
+
+\bibitem{Nakkiran2021}
+P.\ Nakkiran, G.\ Kaplun, Y.\ Bansal, T.\ Yang, B.\ Barak, and I.\ Sutskever.
+\newblock Deep double descent: Where bigger models and more data hurt.
+\newblock \emph{Journal of Statistical Mechanics: Theory and Experiment}, 2021(12):124003, 2021.
+
+\bibitem{Ascoli2020}
+S.\ d'Ascoli, G.\ Refinetti, G.\ Biroli, and F.\ Krzakala.
+\newblock Double trouble in double descent: Bias and variance in the lazy regime.
+\newblock In \emph{Proceedings of ICML}, PMLR 119:2280--2290, 2020.
+
+\bibitem{Deng2022}
+Z.\ Deng, A.\ Kammoun, and C.\ Thrampoulidis.
+\newblock A model of double descent for high-dimensional binary linear classification.
+\newblock \emph{Information and Inference: A Journal of the IMA}, 11(2):435--495, 2022.
+
+\bibitem{Nakkiran2020}
+P.\ Nakkiran, P.\ Bhojanapalli, S.\ Kakade, and T.\ Ma.
+\newblock Optimal regularization can mitigate double descent.
+\newblock arXiv:2003.01897, 2020.
+
+\end{thebibliography}
+
+\end{document}
